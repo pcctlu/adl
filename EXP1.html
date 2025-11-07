@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title></title>
+</head>
+<body>
+	<pre>
+
+
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from tensorflow.keras.datasets import cifar10
+import numpy as np
+
+
+(x_train, y_train), (x_test, y_test) = cifar10.load_data()
+
+
+import matplotlib.pyplot as plt
+
+class_names = ['airplane', 'automobile', 'bird', 'cat', 'deer',
+               'dog', 'frog', 'horse', 'ship', 'truck']
+
+plt.figure(figsize=(10,10))
+for i in range(25):
+    plt.subplot(5,5,i+1)
+    plt.xticks([])
+    plt.yticks([])
+    plt.grid(False)
+    plt.imshow(x_train[i], cmap=plt.cm.binary)
+    plt.xlabel(class_names[y_train[i][0]])
+plt.show()
+
+
+x_train = x_train.astype("float32") / 255.0
+x_test = x_test.astype("float32") / 255.0
+
+
+num_labeled = 4000
+num_unlabeled = len(x_train) - num_labeled
+
+
+idx = np.arange(len(x_train))
+np.random.shuffle(idx)
+
+
+x_train, y_train = x_train[idx], y_train[idx]
+x_labeled = x_train[:num_labeled]
+y_labeled = y_train[:num_labeled]
+x_unlabeled = x_train[num_labeled:]
+y_unlabeled = y_train[num_labeled:]
+
+
+model = models.Sequential([
+        layers.Conv2D(32, (3,3), activation='relu', padding='same', input_shape=(32,32,3)),
+        layers.MaxPooling2D(2,2),
+        layers.Conv2D(64, (3,3), activation='relu', padding='same'),
+        layers.MaxPooling2D(2,2),
+        layers.Flatten(),
+        layers.Dense(128, activation='relu'),
+        layers.Dense(10, activation='softmax')
+        ])
+
+
+model.compile(optimizer='adam',
+                  loss='sparse_categorical_crossentropy',
+                  metrics=['accuracy'])
+
+
+model.fit(x_labeled, y_labeled, epochs=10, batch_size=64, validation_data=(x_test, y_test))
+
+
+pseudo_labels = np.argmax(model.predict(x_unlabeled), axis=1)
+
+
+x_combined = np.concatenate([x_labeled, x_unlabeled])
+y_combined = np.concatenate([y_labeled.flatten(), pseudo_labels])
+
+
+model.fit(x_combined, y_combined, epochs=10, batch_size=64, validation_data=(x_test, y_test))
+
+
+test_loss, test_acc = model.evaluate(x_test, y_test, verbose=2)
+
+
+print(test_acc)
+
+
+
+
+
+
+
+	</pre>
+
+</body>
+</html>

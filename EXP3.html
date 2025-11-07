@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title></title>
+</head>
+<body>
+	<pre>
+
+# Implement encoder decoder CNN model for performing semantic segmentation on input images.
+
+
+import tensorflow as tf
+import tensorflow_datasets as tfds
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+IMG_SIZE = 128
+BATCH_SIZE = 32
+BUFFER_SIZE = 1000
+NUM_CLASSES = 3
+
+
+def normalize(input_image, input_mask):
+    input_image = tf.image.resize(input_image, (IMG_SIZE, IMG_SIZE)) / 255.0
+    input_mask = tf.image.resize(input_mask, (IMG_SIZE, IMG_SIZE), method='nearest')
+
+    # Convert to int32 before using tf.where
+    input_mask = tf.cast(input_mask, tf.int32)
+    input_mask = tf.where(input_mask == 3, 0, input_mask)
+
+    return input_image, input_mask
+
+
+def load_data():
+    dataset, info = tfds.load('oxford_iiit_pet:4.0.0', with_info=True)
+    train = dataset['train']
+    test = dataset['test']
+
+    def format_data(datapoint):
+        image = datapoint['image']
+        mask = datapoint['segmentation_mask']
+        image, mask = normalize(image, mask)
+        return image, mask
+
+    train = train.map(format_data, num_parallel_calls=tf.data.AUTOTUNE)
+    test = test.map(format_data, num_parallel_calls=tf.data.AUTOTUNE)
+
+    train_batches = train.cache().shuffle(BUFFER_SIZE).batch(BATCH_SIZE).repeat()
+    train_batches = train_batches.prefetch(buffer_size=tf.data.AUTOTUNE)
+    test_batches = test.batch(BATCH_SIZE)
+
+    return train_batches, test_batches, info.splits['train'].num_examples, info.splits['test'].num_examples
+
+
+train_batches, test_batches, train_count, test_count = load_data()
+
+
+def conv_block(inputs, num_filters):
+    x = tf.keras.layers.Conv2D(num_filters, 3, padding='same', activation='relu')(inputs)
+    x = tf.keras.layers.Conv2D(num_filters, 3, padding='same', activation='relu')(x)
+    return x
+
+
+def encoder_block(inputs, num_filters):
+    x = conv_block(inputs, num_filters)
+    p = tf.keras.layers.MaxPooling2D((2, 2))(x)
+    return x, p
+
+
+def decoder_block(inputs, skip_features, num_filters):
+    x = tf.keras.layers.Conv2DTranspose(num_filters, (2, 2), strides=2, padding='same')(inputs)
+    x = tf.keras.layers.Concatenate()([x, skip_features])
+    x = conv_block(x, num_filters)
+    return x
+
+
+def build_unet(input_shape=(IMG_SIZE, IMG_SIZE, 3), num_classes=NUM_CLASSES):
+    inputs = tf.keras.Input(shape=input_shape)
+
+    s1, p1 = encoder_block(inputs, 64)
+    s2, p2 = encoder_block(p1, 128)
+    s3, p3 = encoder_block(p2, 256)
+    s4, p4 = encoder_block(p3, 512)
+
+    b1 = conv_block(p4, 1024)  # Bottleneck
+
+    d1 = decoder_block(b1, s4, 512)
+    d2 = decoder_block(d1, s3, 256)
+    d3 = decoder_block(d2, s2, 128)
+    d4 = decoder_block(d3, s1, 64)
+
+    outputs = tf.keras.layers.Conv2D(num_classes, 1, padding='same', activation='softmax')(d4)
+
+    model = tf.keras.Model(inputs, outputs)
+    return model
+
+
+model = build_unet()
+
+
+model.compile(optimizer='adam',
+              loss='sparse_categorical_crossentropy',
+              metrics=['accuracy'])
+
+model.summary()
+
+
+EPOCHS = 10
+STEPS_PER_EPOCH = train_count // BATCH_SIZE
+VALIDATION_STEPS = test_count // BATCH_SIZE
+
+history = model.fit(train_batches,
+                    epochs=EPOCHS,
+                    steps_per_epoch=STEPS_PER_EPOCH,
+                    validation_data=test_batches,
+                    validation_steps=VALIDATION_STEPS)
+
+
+def create_mask(pred_mask):
+    # pred_mask shape: (IMG_SIZE, IMG_SIZE, NUM_CLASSES)
+    pred_mask = tf.argmax(pred_mask, axis=-1)
+    pred_mask = pred_mask[..., tf.newaxis]
+    return pred_mask[0]
+def display(display_list):
+    plt.figure(figsize=(15, 5))
+    title = ['Input Image', 'True Mask', 'Predicted Mask']
+
+    for i in range(len(display_list)):
+        plt.subplot(1, len(display_list), i+1)
+        plt.title(title[i])
+        plt.imshow(tf.keras.preprocessing.image.array_to_img(display_list[i]))
+        plt.axis('off')
+    plt.show()
+
+
+def show_predictions(dataset=None, num=2):
+        for image, mask in test_batches.take(8):
+            pred_mask = model.predict(image)
+            display([image[0], mask[0], create_mask(pred_mask)])
+
+print("\nShowing predictions on the test dataset:")
+show_predictions(test_batches, num=5)
+
+
+
+
+
+
+
+	</pre>
+
+</body>
+</html>

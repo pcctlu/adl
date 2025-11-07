@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title></title>
+</head>
+<body>
+	<pre>
+
+!pip install ultralytics
+
+import cv2
+import os
+import glob
+
+
+import os
+from google.colab import files
+import shutil
+
+# Ensure full path works in Colab
+base_path = "/content/yolo_dataset/archer/train"
+os.makedirs(base_path, exist_ok=True)
+
+# Upload video file from local system
+uploaded = files.upload()
+
+# Move and rename the uploaded video
+for filename in uploaded.keys():
+    dest_path = os.path.join(base_path, "training_video.avi")
+    shutil.move(filename, dest_path)
+    print(f"File saved to: {dest_path}")
+
+
+def extract_frames(video_path, output_dir, class_id, every_n=10):
+    """
+    Extract frames from video and save images + YOLO label files.
+    For archer class, adds a bounding box covering the middle region.
+    For basketball, no labels (empty file).
+    """
+    os.makedirs(output_dir + "/images", exist_ok=True)
+    os.makedirs(output_dir + "/labels", exist_ok=True)
+
+    cap = cv2.VideoCapture(video_path)
+    count, frame_no = 0, 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if frame_no % every_n == 0:  # take every nth frame
+            img_name = f"{os.path.splitext(os.path.basename(video_path))[0]}_frame{count}.jpg"
+            img_path = os.path.join(output_dir, "images", img_name)
+            label_path = os.path.join(output_dir, "labels", img_name.replace(".jpg", ".txt"))
+
+            cv2.imwrite(img_path, frame)
+
+            # Get height and width
+            h, w, _ = frame.shape
+
+            with open(label_path, "w") as f:
+                if class_id == 0:  # archer only
+                    # Center bounding box around middle area (50% width x 80% height)
+                    x_center, y_center = 0.5, 0.5
+                    width_ratio, height_ratio = 0.5, 0.8
+                    f.write(f"{class_id} {x_center} {y_center} {width_ratio} {height_ratio}\n")
+
+            count += 1
+        frame_no += 1
+
+    cap.release()
+
+train_videos = glob.glob("yolo_dataset/*/train/*.avi")
+val_videos   = glob.glob("yolo_dataset/*/test/*.avi")
+
+#class map
+#human and model label
+class_map = {"archer": 0, "basketball": 1}
+
+
+#EXTRACT TRAIN FRAMES
+for video in train_videos:
+    class_name = os.path.basename(os.path.dirname(os.path.dirname(video)))  # e.g. "archer"
+    class_id = class_map[class_name]
+    extract_frames(video, "datasets/action_dataset/train", class_id)
+
+
+
+
+# ==== EXTRACT VAL FRAMES ====
+for video in val_videos:
+    class_name = os.path.basename(os.path.dirname(os.path.dirname(video)))
+    class_id = class_map[class_name]
+    extract_frames(video, "datasets/action_dataset/val", class_id)
+
+
+#CREATE action.yaml
+yaml_content = """train: datasets/action_dataset/train/images
+val: datasets/action_dataset/train/images
+
+nc: 2
+names: ["archer", "basketball"]
+"""
+
+
+with open("action.yaml", "w") as f:
+    f.write(yaml_content)
+
+# ==== TRAIN YOLO ====
+from ultralytics import YOLO
+
+model = YOLO("yolov8n.pt")  # base model
+
+model.train(
+    data="action.yaml",
+    epochs=20,
+    imgsz=320
+)
+
+
+# ==== PREDICT ====
+results = model.predict(
+    source="/content/yolo_dataset/archer/train/training_video.avi",
+    conf=0.2,#Predictions  confidence below 20%
+    save=True,
+    show_boxes=True,
+    show_labels=True,
+    show_conf=True,#confidence scores
+)
+
+
+
+
+
+	</pre>
+
+</body>
+</html>
